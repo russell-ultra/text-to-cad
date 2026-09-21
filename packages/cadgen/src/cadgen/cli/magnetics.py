@@ -33,14 +33,39 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from cadgen.magnetics.types import MagneticsError, SweepConfig, sweep_result_to_json
+from cadgen.magnetics.types import (
+    MagneticsError,
+    MateError,
+    SceneError,
+    SweepConfig,
+    sweep_result_to_json,
+)
 
 DEFAULT_PROG = "cadgen magnetics"
+
+#: mm per metre / degrees per radian: model units enter cadgen.magnetics only
+#: through scene.load, so the CLI converts the model-unit flags (--at, --hold)
+#: to SI here, at the one other model-unit boundary.
+_MM_PER_M = 1e3
+MM_TO_M = 1e-3
+
+
+class _UsageError(Exception):
+    """A validation-matrix row that needs the mate to detect, but is a usage
+    error (exit 2), not an analysis error (exit 1).
+
+    argparse handles the rows expressible as a single ``type=`` callable or a
+    cross-flag check; these (``--dof`` for the wrong mate kind, ``--at`` or
+    ``--hold`` outside the mate's limits, a friction flag mismatched to the DOF)
+    can only be judged once ``select_mate`` has resolved the mate. ``main``
+    turns this into ``parser.error`` so it exits 2 like the argparse rows.
+    """
 
 MIN_SAMPLES = 3
 MIN_GRID = 8
@@ -294,6 +319,41 @@ def _out_dir(step: Path, out: str | None) -> Path:
     return Path(out) if out else step.with_name(f"{step.stem}-magnetics")
 
 
+# ------------------------------------------------------------------ model <-> SI
+#
+# `MateSpec.limits` are SI (m, rad); the flags `--at`/`--hold` are MODEL units
+# (mm for a translation, degrees for a rotation). Whether a limits key is
+# angular is fixed by the key -- `turn` is always rad, `travel` always m -- and
+# for the single-DOF `value` key by the mate kind (revolute rotates, slider
+# translates).
+
+
+def _is_angular(mate: Any, key: str) -> bool:
+    if key == "turn":
+        return True
+    if key == "travel":
+        return False
+    return mate.kind == "revolute"  # the "value" key
+
+
+def _model_to_si(mate: Any, key: str, value: float) -> float:
+    return math.radians(value) if _is_angular(mate, key) else value * MM_TO_M
+
+
+def _si_to_model(mate: Any, key: str, value_si: float) -> float:
+    return math.degrees(value_si) if _is_angular(mate, key) else value_si * _MM_PER_M
+
+
+def _within(value: float, lo: float, hi: float) -> bool:
+    """``value`` in the closed ``[lo, hi]`` with a range-scaled float tolerance."""
+    tol = 1e-9 * max(abs(hi - lo), 1.0)
+    return lo - tol <= value <= hi + tol
+
+
+def _model_unit(mate: Any, key: str) -> str:
+    return "degrees" if _is_angular(mate, key) else "mm"
+
+
 def _mate_summary(mate: Any) -> dict[str, Any] | None:
     if mate is None:
         return None
@@ -352,16 +412,87 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
-def _sweep_config(args: argparse.Namespace) -> SweepConfig:
+def _resolve_dof(mate: Any, dof: str | None) -> tuple[str, str | None]:
+    """``(swept_key, held_key)`` for the mate, mapping the mate-dependent ``--dof``
+    rows of the validation matrix to exit 2.
+
+    A cylindrical mate routes through ``kinematics.sweep_dof`` (which raises
+    :class:`MateError` naming the mate and its sub-DOFs when ``--dof`` is missing
+    or names a sub-DOF the mate lacks); the CLI turns that into a usage error. A
+    single-DOF mate sweeps ``value`` and rejects ``--dof`` outright.
+    """
+    from cadgen.magnetics import kinematics as kinematics_mod
+
+    if mate.kind == "cylindrical":
+        try:
+            return kinematics_mod.sweep_dof(mate, dof)
+        except MateError as exc:
+            raise _UsageError(str(exc)) from exc
+    if dof is not None:
+        raise _UsageError(
+            f"--dof {dof!r} is only valid for a cylindrical mate; {mate.name!r} is a {mate.kind} mate"
+        )
+    return "value", None
+
+
+def _prepare_sweep(args: argparse.Namespace, mate: Any) -> tuple[str, str | None]:
+    """Validate the flags that only make sense against a resolved mate.
+
+    Returns ``(swept_key, held_key)``. Raises :class:`_UsageError` (exit 2) for
+    the mate-dependent matrix rows: ``--dof`` for the wrong kind, a friction
+    flag mismatched to the DOF, ``--at`` outside the swept limits, ``--hold``
+    outside the held sub-DOF's limits.
+    """
+    swept_key, held_key = _resolve_dof(mate, args.dof)
+
+    angular = _is_angular(mate, swept_key)
+    if args.friction_N is not None and angular:
+        raise _UsageError(
+            "--friction-N is a force threshold for a translation DOF, but this sweep drives a "
+            f"rotation ({args.dof or mate.name}); use --friction-Nm"
+        )
+    if args.friction_Nm is not None and not angular:
+        raise _UsageError(
+            "--friction-Nm is a torque threshold for a rotation DOF, but this sweep drives a "
+            f"translation ({args.dof or mate.name}); use --friction-N"
+        )
+
+    if args.at is not None:
+        at_si = _model_to_si(mate, swept_key, args.at)
+        lo, hi = mate.limits[swept_key]
+        if not _within(at_si, lo, hi):
+            unit = _model_unit(mate, swept_key)
+            lo_m, hi_m = _si_to_model(mate, swept_key, lo), _si_to_model(mate, swept_key, hi)
+            raise _UsageError(
+                f"--at {args.at:g} is outside the mate's limits [{lo_m:g}, {hi_m:g}] {unit}"
+            )
+
+    if held_key is not None and not args.relax:
+        hold_si = _model_to_si(mate, held_key, args.hold)
+        lo, hi = mate.limits[held_key]
+        if not _within(hold_si, lo, hi):
+            unit = _model_unit(mate, held_key)
+            lo_m, hi_m = _si_to_model(mate, held_key, lo), _si_to_model(mate, held_key, hi)
+            raise _UsageError(
+                f"--hold {args.hold:g} is outside {mate.name}.{held_key}'s limits "
+                f"[{lo_m:g}, {hi_m:g}] {unit}"
+            )
+
+    return swept_key, held_key
+
+
+def _sweep_config(args: argparse.Namespace, mate: Any, swept_key: str, held_key: str | None) -> SweepConfig:
     friction = args.friction_N if args.friction_N is not None else args.friction_Nm
+    at_si = None if args.at is None else _model_to_si(mate, swept_key, args.at)
+    hold_si = 0.0 if held_key is None else _model_to_si(mate, held_key, args.hold)
     return SweepConfig(
         samples=int(args.samples),
         convergence=args.convergence,
         converge_tol=float(args.converge_tol),
         friction=friction,
-        at=args.at,
+        at=at_si,
         dof=args.dof,
-        hold=float(args.hold),
+        hold=hold_si,
         relax=bool(args.relax),
     )
 
@@ -374,14 +505,23 @@ def _cmd_sweep(args: argparse.Namespace) -> int:
 
     step = Path(args.step)
     out_dir = _out_dir(step, args.out)
-    cfg = _sweep_config(args)
 
     mate = kinematics_mod.select_mate(step, args.mate)
+    swept_key, held_key = _prepare_sweep(args, mate)
+    cfg = _sweep_config(args, mate, swept_key, held_key)
     mag_scene = scene_mod.load(step, mate.name)
     _narrate(f"[cadgen] magnetics sweep {step.name}: mate {mate.name} ({mate.kind}), {cfg.samples} poses, convergence {cfg.convergence}")
     result = physics_mod.sweep(mag_scene, cfg)
     at_q = result.verdict.at_q
-    slice_ = physics_mod.field(mag_scene, "mate", grid=DEFAULT_GRID, q=at_q)
+    # The report's field section is the mate-plane slice at the verdict pose. A
+    # degenerate plane (e.g. the mate axis parallel to the shortest bbox axis
+    # with no usable fallback) is not a sweep failure -- the report simply omits
+    # the slice. `at_q` is already SI (physics produced it), so no conversion.
+    try:
+        slice_ = physics_mod.field(mag_scene, "mate", grid=DEFAULT_GRID, q=at_q)
+    except SceneError as exc:
+        _narrate(f"[cadgen] note: no field slice for the report ({exc}); the sweep is unaffected")
+        slice_ = None
     json_path = report_mod.write_json(result, out_dir)
     report_path = report_mod.write_report(result, slice_, out_dir, plotly=args.plotly)
 
@@ -423,13 +563,24 @@ def _cmd_field(args: argparse.Namespace) -> int:
 
     step = Path(args.step)
     out_dir = _out_dir(step, args.out)
+    # A mate is needed to pose the sources at --at, and to parse a mate-plane
+    # slice. An axis-normal slice at the artifact as written (--at 0, no --mate)
+    # needs none, so field works on a model with no mate.
     needs_mate = args.slice.startswith("mate") or args.mate is not None or args.at != 0.0
-    mate_name = None
+    mate = None
     if needs_mate:
-        mate_name = kinematics_mod.select_mate(step, args.mate).name
-    mag_scene = scene_mod.load(step, mate_name)
+        mate = kinematics_mod.select_mate(step, args.mate)
+    mag_scene = scene_mod.load(step, mate.name if mate is not None else None)
+
+    # --at is MODEL units. field carries no --dof, so a cylindrical mate poses
+    # along its translation (travel); a slider/revolute along its single DOF.
+    q_si = 0.0
+    if mate is not None:
+        pose_key = "travel" if mate.kind == "cylindrical" else "value"
+        q_si = _model_to_si(mate, pose_key, args.at)
+
     _narrate(f"[cadgen] magnetics field {step.name}: slice {args.slice}, grid {args.grid}, at {args.at:g}")
-    slice_ = physics_mod.field(mag_scene, args.slice, grid=int(args.grid), q=float(args.at))
+    slice_ = physics_mod.field(mag_scene, args.slice, grid=int(args.grid), q=q_si)
     field_path = report_mod.write_field(slice_, out_dir, plotly=args.plotly)
 
     from cadgen.magnetics import _deps
@@ -472,6 +623,10 @@ def _run(args: argparse.Namespace) -> int:
         if args.command == "field":
             return _cmd_field(args)
     except MagneticsError as exc:
+        # Every analysis error is a MagneticsError subclass (dependency gate,
+        # scene, mate, physics): exit 1 with the domain module's message, which
+        # already names the leaf, mate or fix. _UsageError is deliberately NOT a
+        # MagneticsError, so a mate-dependent usage row escapes to `main`.
         return _fail(str(exc))
     except (SidecarBindingError, SidecarSchemaError) as exc:
         # cadgen's own binding error: the sidecar is missing, stale (documentHash
@@ -484,7 +639,12 @@ def main(argv: Sequence[str] | None = None, prog: str | None = None) -> int:
     parser = build_parser(prog)
     args = parser.parse_args(list(argv) if argv is not None else sys.argv[1:])
     _validate(parser, args)
-    return _run(args)
+    try:
+        return _run(args)
+    except _UsageError as exc:
+        # A validation-matrix row that needed the mate to detect: exit 2, like
+        # the argparse rows, via the same error path.
+        parser.error(str(exc))  # raises SystemExit(2)
 
 
 if __name__ == "__main__":
