@@ -20,6 +20,12 @@ playwright
 # - skills/dfam-check/requirements.txt
 rtree
 scipy
+# - cadgen[magnetics]  (permanent-magnet mechanism analysis; numpy and scipy arrive with these)
+# magpylib is the physics engine: analytic fields of cuboid, cylinder and triangular-mesh
+# magnets, and the meshed force/torque integration `cadgen magnetics sweep` reads.
+magpylib>=5.2,<6
+# plotly renders report.html (embedded by default, `--plotly cdn` for the small form).
+plotly
 
 # Repo tests only.
 networkx

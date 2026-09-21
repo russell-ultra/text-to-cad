@@ -62,6 +62,12 @@ dependencies = [
 # is opt-in.
 [project.optional-dependencies]
 snapshot = ["playwright"]
+# Permanent-magnet mechanism analysis (`cadgen magnetics`, cadgen.magnetics). magpylib is
+# the physics engine and brings numpy and scipy; plotly renders the report. cadgen itself
+# has no numpy or scipy dependency and must not gain one unconditionally, so every import
+# of these is lazy (cadgen.magnetics._deps) and fails with the `pip install
+# "cadgen[magnetics]"` hint when the extra is absent.
+magnetics = ["magpylib>=5.2,<6", "numpy", "scipy", "plotly"]
 
 [project.urls]
 Homepage = "https://github.com/earthtojake/text-to-cad"

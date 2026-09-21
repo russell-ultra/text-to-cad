@@ -85,6 +85,7 @@ class CompactStdoutTests(unittest.TestCase):
         "packages/cadgen/src/cadgen/cli/_run_model.py",
         "packages/cadgen/src/cadgen/cli/daemon_status.py",
         "packages/cadgen/src/cadgen/cli/store.py",
+        "packages/cadgen/src/cadgen/cli/magnetics.py",
     )
 
     def test_the_source_list_covers_every_json_emitting_cli(self):
