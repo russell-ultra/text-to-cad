@@ -280,6 +280,17 @@ file it was asked for.
 materials, or animation; no
 `.step.json` may appear beside it.
 
+### 18. Optional analysis modules gate their deps and carry their own laws
+
+`cadgen.magnetics` (the `cadgen magnetics inspect|sweep|field` verbs, behind the
+`magnetics` extra) is the first: its heavy dependencies (magpylib, numpy, scipy,
+plotly) reach it only through lazy `_deps` accessors, so cadgen still imports and
+answers `--help` with the extra absent (law 15 unchanged), and its own laws —
+the SI boundary, the body-frame rule, the weld rule, `squeeze=False`, the
+convergence protocol and the split verdict — live in
+[`src/cadgen/magnetics/README.md`](src/cadgen/magnetics/README.md); read that
+before changing anything under `magnetics/`.
+
 ## The shape of the package
 
 ```

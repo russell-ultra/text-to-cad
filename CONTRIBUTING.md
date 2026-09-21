@@ -355,6 +355,53 @@ nothing else from outside its directory.
 - `VERSION` at the repo root is canonical; release tooling stamps every
   duplicate. Never hand-edit versions under `packages/`.
 
+## Magnetics Development In This Repo
+
+`cadgen.magnetics` (`packages/cadgen/src/cadgen/magnetics/`) is optional analysis
+behind the `magnetics` extra; its laws are in that module's `README.md` and this
+section is the repo-development half. It is being prototyped on a fork branch and
+lands upstream as one PR — the fork workflow is the "External contributors" path
+in [Repository remotes](#repository-remotes): push the feature branch to your
+fork and open the pull request against `earthtojake/text-to-cad:main`.
+
+The extra's dependencies (magpylib, plotly, and the numpy/scipy magpylib brings)
+are active lines in `requirements-dev.txt`, so a checkout that ran
+`pip install -r requirements-dev.txt` already has them; the editable install then
+satisfies the `cadgen[magnetics]==<VERSION>` pin the way every other skill's pin
+is satisfied. To pull the extra in explicitly:
+
+```bash
+./.venv/bin/pip install -e 'packages/cadgen[magnetics]'
+```
+
+The tests live at `tests/python/packages/cadgen/magnetics/` and run with the
+cadgen package suite. The whole suite:
+
+```bash
+scripts/test/test-python.sh --select cadgen
+```
+
+One file while working on it — put the worktree's `packages/cadgen/src` ahead of
+the editable install so your edits win:
+
+```bash
+PYTHONPATH="$PWD:$PWD/packages/cadgen/src" \
+  ./.venv/bin/python -m unittest tests/python/packages/cadgen/magnetics/test_scene.py
+```
+
+The tests that exercise physics `skipUnless` the extra is importable, with a
+loud reason, so a checkout without magpylib reports skips rather than failures.
+
+The magnetics tests that build STEP fixtures go through the packaged runtime
+(`_runtime/`), which is gitignored and absent from a fresh worktree. Symlink it
+from the primary checkout (never commit it; the no-symlink rule is about tracked
+files):
+
+```bash
+ln -s <main>/packages/cadgen/src/cadgen/_runtime \
+  packages/cadgen/src/cadgen/_runtime
+```
+
 ## Viewer Development In This Repo
 
 `apps/viewer/README.md` keeps the app-facing half (launcher contract, dev vs
