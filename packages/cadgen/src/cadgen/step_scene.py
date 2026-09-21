@@ -122,6 +122,17 @@ class Occurrence(Selection):
         return self._scene._prototype_ids.get(self._node.prototype_key)
 
     @property
+    def world_transform(self) -> tuple[float, ...]:
+        """The occurrence's world placement as 16 row-major floats (a 4x4 matrix).
+
+        Rotation is the first three entries of rows 0-2; translation is at
+        indices 3, 7, 11. This is the placed local->world transform in the
+        document's units; ``shape()`` already returns geometry in these
+        coordinates.
+        """
+        return self._node.transform
+
+    @property
     def children(self) -> tuple[Occurrence, ...]:
         return tuple(self._scene._occurrences[_node_ref(node)] for node in self._node.children)
 
