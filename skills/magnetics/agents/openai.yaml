@@ -1,0 +1,4 @@
+interface:
+  display_name: "Magnetics"
+  short_description: "Analyze permanent-magnet mechanisms: force, torque, energy along a mate"
+  default_prompt: "Use $magnetics to inspect the magnets in this model and sweep its mate for force, torque, potential energy, equilibria and a verdict."
