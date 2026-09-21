@@ -91,6 +91,12 @@ const skillGroups = [
     summary:
       "Dry-runs, uploads, and cautiously starts local Bambu Lab print jobs from validated .gcode.",
   },
+  {
+    name: "Magnetics",
+    path: "skills/magnetics",
+    summary:
+      "Analyzes permanent-magnet mechanisms: force, torque, and potential energy along a mate, with equilibria, a verdict, and field slices.",
+  },
 ];
 
 // Command boxes cap at half the 1200px content shell rather than filling it: a command is a
