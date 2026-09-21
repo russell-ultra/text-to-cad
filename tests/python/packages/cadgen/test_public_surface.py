@@ -100,6 +100,10 @@ UNCLASSIFIED = {
     "store",
     "daemon",
     "daemon status",
+    # Domain analysis with a hand-written multi-verb parser (inspect | sweep |
+    # field), extra-gated on cadgen[magnetics]. Like store/daemon/viewer, its
+    # subcommands differ by signature, so there is no one function to mirror.
+    "magnetics",
     # The viewer launcher owns its parser: the launch contract (reuse-or-start,
     # port roll, the --json announce line) is not a function signature to mirror.
     "viewer",
