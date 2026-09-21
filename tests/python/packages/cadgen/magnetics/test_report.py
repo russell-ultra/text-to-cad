@@ -303,7 +303,7 @@ class WriteReportTests(unittest.TestCase):
     def test_plotly_js_appears_exactly_once(self) -> None:
         # Two figures (curves + slice); the bundle/CDN tag must appear once.
         with tempfile.TemporaryDirectory() as d:
-            text = report.write_report(make_result(), make_slice(), d, plotly="cdn").read_text()
+            text = report.write_report(make_result(), make_slice(), d, plotly="cdn").read_text(encoding="utf-8")
             self.assertEqual(len(_CDN_SCRIPT.findall(text)), 1)
 
 
