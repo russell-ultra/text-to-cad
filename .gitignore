@@ -88,3 +88,4 @@ design/
 # a build timestamp, so committing them would churn); a fresh checkout
 # restores pose/mates by running the script once.
 *.source.json
+.gstack/
